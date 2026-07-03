@@ -1,0 +1,47 @@
+name: CI
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: windows-2025
+    steps:
+      
+      - name: Download Tools
+        shell: pwsh
+        run: |
+          $base = "https://raw.githubusercontent.com/raiyan088/Emulator/refs/heads/main"
+
+          Invoke-WebRequest "$base/AdbWinApi.dll" -OutFile "AdbWinApi.dll"
+          Invoke-WebRequest "$base/AdbWinUsbApi.dll" -OutFile "AdbWinUsbApi.dll"
+          Invoke-WebRequest "$base/adb.exe" -OutFile "adb.exe"
+          Invoke-WebRequest "$base/config.json" -OutFile "config.json"
+          Invoke-WebRequest "$base/devices.json" -OutFile "devices.json"
+          Invoke-WebRequest "$base/install.py" -OutFile "install.py"
+          Invoke-WebRequest "$base/setup.js" -OutFile "setup.js"
+
+      - name: Download Emulator
+        run: Invoke-WebRequest http://a11.gdl.easebar.com/MuMu-setup-V5.30.2.3616-overseas-0611173626.exe -OutFile Emulator.exe
+      
+      - name: PIP Install
+        run: pip install -U pywinauto
+
+      - name: NPM Install
+        run: npm install fs
+
+      - name: Node Start
+        run: node setup.js
+      
+      - name: Download
+        run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+
+      - name: Extract
+        run: Expand-Archive ngrok.zip
+
+      - name: Enable TS
+        run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server'-name "fDenyTSConnections" -Value 0
+      - run: Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+      - run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+      - run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+
+      - name: Create Tunnel
+        run: .\ngrok\ngrok.exe authtoken 2YMpPG6ws3Y1x5unwwSlUNVs3Wu_67JPAFd2MmxAo7cBVK7Lq
+      - run: .\ngrok\ngrok.exe tcp 3389
