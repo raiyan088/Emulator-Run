@@ -24,9 +24,6 @@ jobs:
       - name: PIP Install
         run: pip install -U pywinauto
 
-      - name: NPM Install
-        run: npm install fs
-
       - name: Node Start
         run: node setup.js
       
