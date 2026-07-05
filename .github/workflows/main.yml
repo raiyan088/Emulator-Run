@@ -13,6 +13,7 @@ jobs:
           Invoke-WebRequest "$base/AdbWinApi.dll" -OutFile "AdbWinApi.dll"
           Invoke-WebRequest "$base/AdbWinUsbApi.dll" -OutFile "AdbWinUsbApi.dll"
           Invoke-WebRequest "$base/adb.exe" -OutFile "adb.exe"
+          Invoke-WebRequest "$base/instagram.apk" -OutFile "instagram.apk"
           Invoke-WebRequest "$base/config.conf" -OutFile "config.conf"
           Invoke-WebRequest "$base/devices.json" -OutFile "devices.json"
           Invoke-WebRequest "$base/download.js" -OutFile "download.js"
