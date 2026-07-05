@@ -15,17 +15,18 @@ jobs:
           Invoke-WebRequest "$base/adb.exe" -OutFile "adb.exe"
           Invoke-WebRequest "$base/config.json" -OutFile "config.json"
           Invoke-WebRequest "$base/devices.json" -OutFile "devices.json"
+          Invoke-WebRequest "$base/download.js" -OutFile "download.js"
           Invoke-WebRequest "$base/install.py" -OutFile "install.py"
           Invoke-WebRequest "$base/setup.js" -OutFile "setup.js"
 
-      - name: Download Emulator
-        run: Invoke-WebRequest http://a11.gdl.easebar.com/MuMu-setup-V5.30.2.3616-overseas-0611173626.exe -OutFile Emulator.exe
-      
       - name: PIP Install
         run: pip install -U pywinauto
 
+      - name: Download Emulator
+        run: node download.js
+        
       - name: Node Start
-        run: node setup.js
+        run: dir
       
       - name: Download
         run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
