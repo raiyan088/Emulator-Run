@@ -19,38 +19,34 @@ jobs:
           curl -sSL https://raw.githubusercontent.com/raiyan088/script/refs/heads/main/vpn.ovpn -o client.ovpn
           test -s client.ovpn && echo "OVPN file downloaded successfully."
 
-      - name: Check Original Runner IP
+      - name: Start OpenVPN Container (Foreground Test)
         run: |
-          echo "Original Public IP:"
-          curl -s ifconfig.me
-          echo ""
-
-      - name: Start OpenVPN Container
-        run: |
-          docker run -d \
+          # প্রথমে ফোরগ্রাউন্ডে চালিয়ে চেক করব কোথায় এরর খাচ্ছে
+          docker run \
             --name openvpn-client \
             --cap-add=NET_ADMIN \
             --cap-add=SYS_MODULE \
             --device /dev/net/tun \
             -v $(pwd)/client.ovpn:/etc/openvpn/client.ovpn \
             ubuntu:latest \
-            bash -c "export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get install -y openvpn curl iproute2 && openvpn --config /etc/openvpn/client.ovpn --daemon"
+            bash -c "export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get install -y openvpn curl iproute2 && openvpn --config /etc/openvpn/client.ovpn" &
+          
+          # ৫ সেকেন্ড সময় দিয়ে চেক করা কন্টেইনার চলছে কি না
+          sleep 5
+          docker ps
 
-      - name: Wait & Verify OpenVPN Connection
+      - name: Debug OpenVPN Logs if Failed
+        if: always()
         run: |
-          echo "Waiting for VPN connection to establish..."
-          sleep 12
-          echo "=== OpenVPN Process Check ==="
-          docker exec openvpn-client ps aux | grep openvpn
+          echo "=== OpenVPN Logs ==="
+          docker logs openvpn-client || true
 
-      - name: Check VPN Container Public IP & Tun0 Interface
+      - name: Check VPN Container Public IP
         run: |
           echo "VPN Container Public IP:"
           docker exec openvpn-client curl -s ifconfig.me
           echo ""
-          echo "=== Container Interfaces ==="
           docker exec openvpn-client ip a show tun0
-          # Verification: Check if tun0 exists and has IP assigned
 
       - name: Stop and Cleanup Container
         if: always()
