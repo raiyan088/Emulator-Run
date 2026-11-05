@@ -1,7 +1,7 @@
 name: OpenVPN Docker IP Check
 
 on:
-  workflow_dispatch: # GitHub Console থেকে ম্যানুয়ালি রান করার জন্য
+  workflow_dispatch:
   push:
     branches: [ "main" ]
 
@@ -15,10 +15,9 @@ jobs:
 
       - name: Download .ovpn file from URL
         run: |
-          echo "Downloading .ovpn file from raw URL..."
-          wget -O client.ovpn https://raw.githubusercontent.com/raiyan088/script/refs/heads/main/vpn.ovpn
-          
-          # Verification: Check if file exists and has content
+          echo "Downloading .ovpn file..."
+          curl -sSL https://raw.githubusercontent.com/raiyan088/script/refs/heads/main/vpn.ovpn -o client.ovpn
+          # Verification: Ensure file downloaded and has content
           test -s client.ovpn && echo "OVPN file downloaded successfully."
 
       - name: Check Original Runner IP
@@ -27,30 +26,32 @@ jobs:
           curl -s ifconfig.me
           echo ""
 
-      - name: Run OpenVPN Container inside Docker
+      - name: Start OpenVPN Container
         run: |
           docker run -d \
             --name openvpn-client \
             --cap-add=NET_ADMIN \
+            --cap-add=SYS_MODULE \
             --device /dev/net/tun \
-            -v $(pwd)/client.ovpn:/etc/openvpn/client.ovpn:ro \
-            dperson/openvpn-client
-          
-          # Verification: Ensure container is running
-          docker ps | grep openvpn-client
+            -v $(pwd)/client.ovpn:/etc/openvpn/client.ovpn \
+            ubuntu:latest \
+            bash -c "apt-get update && apt-get install -y openvpn curl iproute2 && openvpn --config /etc/openvpn/client.ovpn"
 
-      - name: Wait for VPN Tunnel Connection
+      - name: Wait & Verify OpenVPN Logs
         run: |
           echo "Waiting for VPN connection to establish..."
-          sleep 10
+          sleep 12
+          echo "=== OpenVPN Container Logs ==="
+          docker logs openvpn-client
 
-      - name: Check VPN IP inside Docker Container
+      - name: Check VPN Container Public IP & Tun0 Interface
         run: |
           echo "VPN Container Public IP:"
           docker exec openvpn-client curl -s ifconfig.me
           echo ""
-          # Verification: Ensure tunnel interface (tun0) is UP inside container
+          echo "=== Container Interfaces ==="
           docker exec openvpn-client ip a show tun0
+          # Verification: Check if tun0 exists inside container
 
       - name: Stop and Cleanup Container
         if: always()
