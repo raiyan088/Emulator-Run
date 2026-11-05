@@ -53,6 +53,7 @@ jobs:
             --privileged \
             --cap-add=NET_ADMIN \
             --device /dev/net/tun \
+            --dns 8.8.8.8 --dns 1.1.1.1 \
             -v $(pwd)/client.ovpn:/etc/openvpn/client.ovpn:ro \
             $AUTH_MOUNT \
             alpine:latest \
@@ -77,6 +78,12 @@ jobs:
           docker logs openvpn-client
           exit 1
 
+      - name: Fix DNS inside VPN container
+        run: |
+          docker exec openvpn-client sh -c 'printf "nameserver 1.1.1.1\nnameserver 8.8.8.8\n" > /etc/resolv.conf'
+          echo "=== resolv.conf ==="
+          docker exec openvpn-client cat /etc/resolv.conf
+
       - name: Debug OpenVPN Logs
         if: always()
         run: |
@@ -85,19 +92,12 @@ jobs:
 
       - name: Check VPN Container Public IP
         run: |
-          echo "=== Interfaces ==="
-          docker exec openvpn-client ip addr show
-          echo "=== Routes ==="
-          docker exec openvpn-client ip route
-          echo "=== resolv.conf ==="
-          docker exec openvpn-client cat /etc/resolv.conf
-          echo "=== Ping by IP (no DNS) ==="
-          docker exec openvpn-client ping -c 3 -W 3 1.1.1.1 || true
-          echo "=== Curl by IP (no DNS) ==="
-          docker exec openvpn-client curl -sv --max-time 15 https://1.1.1.1/cdn-cgi/trace || true
-          echo "=== Curl ipify (verbose) ==="
-          docker exec openvpn-client curl -v --max-time 15 https://api.ipify.org || true
+          echo "VPN Container Public IP:"
+          docker exec openvpn-client curl -s --max-time 15 https://api.ipify.org \
+            || docker exec openvpn-client curl -s --max-time 15 https://1.1.1.1/cdn-cgi/trace | grep '^ip='
           echo ""
+          echo "=== Container Interfaces ==="
+          docker exec openvpn-client ip addr show tun0
 
       - name: Stop and Cleanup Container
         if: always()
