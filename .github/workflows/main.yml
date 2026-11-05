@@ -17,35 +17,38 @@ jobs:
         run: |
           echo "Downloading .ovpn file..."
           curl -sSL https://raw.githubusercontent.com/raiyan088/script/refs/heads/main/vpn.ovpn -o client.ovpn
+          # Verification: Ensure file downloaded and has content
           test -s client.ovpn && echo "OVPN file downloaded successfully."
 
-      - name: Start OpenVPN Container (Foreground Test)
+      - name: Check Original Runner IP
         run: |
-          # প্রথমে ফোরগ্রাউন্ডে চালিয়ে চেক করব কোথায় এরর খাচ্ছে
-          docker run \
+          echo "Original Public IP:"
+          curl -s ifconfig.me
+          echo ""
+
+      - name: Start OpenVPN Container
+        run: |
+          docker run -d \
             --name openvpn-client \
             --cap-add=NET_ADMIN \
-            --cap-add=SYS_MODULE \
             --device /dev/net/tun \
-            -v $(pwd)/client.ovpn:/etc/openvpn/client.ovpn \
-            ubuntu:latest \
-            bash -c "export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get install -y openvpn curl iproute2 && openvpn --config /etc/openvpn/client.ovpn" &
-          
-          # ৫ সেকেন্ড সময় দিয়ে চেক করা কন্টেইনার চলছে কি না
-          sleep 5
-          docker ps
+            -v $(pwd)/client.ovpn:/etc/openvpn/client.ovpn:ro \
+            dperson/openvpn-client
 
-      - name: Debug OpenVPN Logs if Failed
-        if: always()
+      - name: Wait for VPN Tunnel Connection
         run: |
-          echo "=== OpenVPN Logs ==="
-          docker logs openvpn-client || true
+          echo "Waiting for VPN connection to establish..."
+          sleep 10
+          # Verification: Check if container is running without crashing
+          docker ps | grep openvpn-client
 
       - name: Check VPN Container Public IP
         run: |
           echo "VPN Container Public IP:"
-          docker exec openvpn-client curl -s ifconfig.me
+          # curl এর বদলে wget -qO- ব্যবহার করা হয়েছে
+          docker exec openvpn-client wget -qO- ifconfig.me
           echo ""
+          echo "=== Container Interfaces ==="
           docker exec openvpn-client ip a show tun0
 
       - name: Stop and Cleanup Container
