@@ -8,6 +8,7 @@ on:
 jobs:
   vpn-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository code
@@ -16,32 +17,68 @@ jobs:
       - name: Download .ovpn file from URL
         run: |
           echo "Downloading .ovpn file..."
-          curl -sSL https://raw.githubusercontent.com/raiyan088/script/refs/heads/main/vpn.ovpn -o client.ovpn
+          curl -fsSL https://raw.githubusercontent.com/raiyan088/script/refs/heads/main/vpn.ovpn -o client.ovpn
           test -s client.ovpn && echo "OVPN file downloaded successfully."
+
+      - name: Create auth file (only if secrets are set)
+        env:
+          VPN_USER: ${{ secrets.VPN_USER }}
+          VPN_PASS: ${{ secrets.VPN_PASS }}
+        run: |
+          if [ -n "$VPN_USER" ] && [ -n "$VPN_PASS" ]; then
+            printf '%s\n%s\n' "$VPN_USER" "$VPN_PASS" > auth.txt
+            chmod 600 auth.txt
+            echo "Auth file created."
+          else
+            echo "No VPN_USER/VPN_PASS secrets set, skipping auth file."
+          fi
 
       - name: Check Original Runner IP
         run: |
           echo "Original Public IP:"
-          curl -s https://api.ipify.org
+          curl -s --max-time 15 https://api.ipify.org
           echo ""
 
       - name: Start OpenVPN Container using Alpine
         run: |
+          AUTH_MOUNT=""
+          AUTH_ARG=""
+          if [ -f auth.txt ]; then
+            AUTH_MOUNT="-v $(pwd)/auth.txt:/etc/openvpn/auth.txt:ro"
+            AUTH_ARG="--auth-user-pass /etc/openvpn/auth.txt"
+          fi
+
           docker run -d \
             --name openvpn-client \
             --privileged \
             --cap-add=NET_ADMIN \
             --device /dev/net/tun \
             -v $(pwd)/client.ovpn:/etc/openvpn/client.ovpn:ro \
+            $AUTH_MOUNT \
             alpine:latest \
-            sh -c "apk add --no-cache openvpn curl iproute2 && openvpn --config /etc/openvpn/client.ovpn"
+            sh -c "apk add --no-cache openvpn curl iproute2 && openvpn --config /etc/openvpn/client.ovpn $AUTH_ARG"
 
       - name: Wait for VPN Tunnel Connection
         run: |
           echo "Waiting for VPN connection to establish..."
-          sleep 12
+          for i in $(seq 1 60); do
+            if docker logs openvpn-client 2>&1 | grep -q "Initialization Sequence Completed"; then
+              echo "VPN connected."
+              exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' openvpn-client)" != "true" ]; then
+              echo "Container exited early:"
+              docker logs openvpn-client
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "Timeout waiting for VPN connection."
+          docker logs openvpn-client
+          exit 1
 
       - name: Debug OpenVPN Logs
+        if: always()
         run: |
           echo "=== OpenVPN Logs ==="
           docker logs openvpn-client || true
@@ -49,13 +86,14 @@ jobs:
       - name: Check VPN Container Public IP
         run: |
           echo "VPN Container Public IP:"
-          docker exec openvpn-client curl -s https://api.ipify.org
+          docker exec openvpn-client curl -s --max-time 15 https://api.ipify.org
           echo ""
           echo "=== Container Interfaces ==="
-          docker exec openvpn-client ip a show tun0
+          docker exec openvpn-client ip addr show
 
       - name: Stop and Cleanup Container
         if: always()
         run: |
           docker stop openvpn-client || true
           docker rm openvpn-client || true
+          rm -f auth.txt
