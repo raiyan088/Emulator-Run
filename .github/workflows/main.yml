@@ -20,18 +20,17 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/raiyan088/script/refs/heads/main/vpn.ovpn -o client.ovpn
           test -s client.ovpn && echo "OVPN file downloaded successfully."
 
-      - name: Create auth file (only if secrets are set)
-        env:
-          VPN_USER: ${{ secrets.VPN_USER }}
-          VPN_PASS: ${{ secrets.VPN_PASS }}
+      - name: Create tinyproxy config
         run: |
-          if [ -n "$VPN_USER" ] && [ -n "$VPN_PASS" ]; then
-            printf '%s\n%s\n' "$VPN_USER" "$VPN_PASS" > auth.txt
-            chmod 600 auth.txt
-            echo "Auth file created."
-          else
-            echo "No VPN_USER/VPN_PASS secrets set, skipping auth file."
-          fi
+          printf '%s\n' \
+            'Port 8888' \
+            'Listen 0.0.0.0' \
+            'Timeout 600' \
+            'Allow 0.0.0.0/0' \
+            'DisableViaHeader Yes' \
+            'LogLevel Info' \
+            'MaxClients 50' > tinyproxy.conf
+          cat tinyproxy.conf
 
       - name: Check Original Runner IP
         run: |
@@ -41,23 +40,17 @@ jobs:
 
       - name: Start OpenVPN Container using Alpine
         run: |
-          AUTH_MOUNT=""
-          AUTH_ARG=""
-          if [ -f auth.txt ]; then
-            AUTH_MOUNT="-v $(pwd)/auth.txt:/etc/openvpn/auth.txt:ro"
-            AUTH_ARG="--auth-user-pass /etc/openvpn/auth.txt"
-          fi
-
           docker run -d \
             --name openvpn-client \
             --privileged \
             --cap-add=NET_ADMIN \
             --device /dev/net/tun \
             --dns 8.8.8.8 --dns 1.1.1.1 \
+            -p 127.0.0.1:8888:8888 \
             -v $(pwd)/client.ovpn:/etc/openvpn/client.ovpn:ro \
-            $AUTH_MOUNT \
+            -v $(pwd)/tinyproxy.conf:/etc/tinyproxy/custom.conf:ro \
             alpine:latest \
-            sh -c "apk add --no-cache openvpn curl iproute2 && openvpn --config /etc/openvpn/client.ovpn $AUTH_ARG"
+            sh -c "apk add --no-cache openvpn curl iproute2 tinyproxy && openvpn --config /etc/openvpn/client.ovpn"
 
       - name: Wait for VPN Tunnel Connection
         run: |
@@ -84,6 +77,12 @@ jobs:
           echo "=== resolv.conf ==="
           docker exec openvpn-client cat /etc/resolv.conf
 
+      - name: Start tinyproxy inside VPN container
+        run: |
+          docker exec -d openvpn-client tinyproxy -d -c /etc/tinyproxy/custom.conf
+          sleep 3
+          docker exec openvpn-client sh -c 'ps | grep [t]inyproxy' || { echo "tinyproxy not running"; exit 1; }
+
       - name: Debug OpenVPN Logs
         if: always()
         run: |
@@ -99,9 +98,26 @@ jobs:
           echo "=== Container Interfaces ==="
           docker exec openvpn-client ip addr show tun0
 
+      - name: Test proxy (http://127.0.0.1:8888)
+        run: |
+          echo "VPN IP through proxy:"
+          curl -s --max-time 20 -x http://127.0.0.1:8888 https://api.ipify.org
+          echo ""
+
+      # ---- আপনার নিজের কাজ এখানে চালান, প্রক্সি ব্যবহার করে ----
+      - name: Run my task through the proxy
+        env:
+          HTTP_PROXY: http://127.0.0.1:8888
+          HTTPS_PROXY: http://127.0.0.1:8888
+        run: |
+          echo "My task IP:"
+          curl -s --max-time 20 https://api.ipify.org
+          echo ""
+          # এখানে আপনার স্ক্রিপ্ট যোগ করুন
+
       - name: Stop and Cleanup Container
         if: always()
         run: |
           docker stop openvpn-client || true
           docker rm openvpn-client || true
-          rm -f auth.txt
+          rm -f tinyproxy.conf
