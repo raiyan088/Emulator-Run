@@ -17,36 +17,39 @@ jobs:
         run: |
           echo "Downloading .ovpn file..."
           curl -sSL https://raw.githubusercontent.com/raiyan088/script/refs/heads/main/vpn.ovpn -o client.ovpn
-          # Verification: Ensure file downloaded and has content
           test -s client.ovpn && echo "OVPN file downloaded successfully."
 
       - name: Check Original Runner IP
         run: |
           echo "Original Public IP:"
-          curl -s ifconfig.me
+          curl -s https://api.ipify.org
           echo ""
 
-      - name: Start OpenVPN Container
+      - name: Start OpenVPN Container using Alpine
         run: |
           docker run -d \
             --name openvpn-client \
+            --privileged \
             --cap-add=NET_ADMIN \
             --device /dev/net/tun \
             -v $(pwd)/client.ovpn:/etc/openvpn/client.ovpn:ro \
-            dperson/openvpn-client
+            alpine:latest \
+            sh -c "apk add --no-cache openvpn curl iproute2 && openvpn --config /etc/openvpn/client.ovpn"
 
       - name: Wait for VPN Tunnel Connection
         run: |
           echo "Waiting for VPN connection to establish..."
-          sleep 10
-          # Verification: Check if container is running without crashing
-          docker ps | grep openvpn-client
+          sleep 12
+
+      - name: Debug OpenVPN Logs
+        run: |
+          echo "=== OpenVPN Logs ==="
+          docker logs openvpn-client || true
 
       - name: Check VPN Container Public IP
         run: |
           echo "VPN Container Public IP:"
-          # curl এর বদলে wget -qO- ব্যবহার করা হয়েছে
-          docker exec openvpn-client wget -qO- ifconfig.me
+          docker exec openvpn-client curl -s https://api.ipify.org
           echo ""
           echo "=== Container Interfaces ==="
           docker exec openvpn-client ip a show tun0
