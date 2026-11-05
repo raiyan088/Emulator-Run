@@ -51,6 +51,11 @@ jobs:
           curl -s --max-time 15 https://api.ipify.org
           echo ""
 
+      - name: RAM before starting VPN
+        run: |
+          echo "=== RAM BEFORE ==="
+          free -h
+
       - name: Start all OpenVPN containers
         run: |
           COUNT=$(cat count.txt)
@@ -118,6 +123,14 @@ jobs:
             echo ""
           done
 
+      - name: Check RAM usage (after proxies running)
+        run: |
+          echo "=== Runner total RAM (AFTER) ==="
+          free -h
+          echo ""
+          echo "=== Per-container usage ==="
+          docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.CPUPerc}}"
+
       # ---- আপনার নিজের কাজ এখানে চালান ----
       - name: Run my task through the proxies
         run: |
@@ -128,6 +141,14 @@ jobs:
           curl -s --max-time 20 -x http://127.0.0.1:8888 https://api.ipify.org
           echo ""
           # এখানে আপনার স্ক্রিপ্ট যোগ করুন
+
+      - name: Check RAM usage (after task)
+        if: always()
+        run: |
+          echo "=== Runner total RAM (AFTER TASK) ==="
+          free -h
+          echo ""
+          docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.CPUPerc}}" || true
 
       - name: Debug logs
         if: always()
