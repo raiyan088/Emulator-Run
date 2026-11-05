@@ -17,7 +17,6 @@ jobs:
         run: |
           echo "Downloading .ovpn file..."
           curl -sSL https://raw.githubusercontent.com/raiyan088/script/refs/heads/main/vpn.ovpn -o client.ovpn
-          # Verification: Ensure file downloaded and has content
           test -s client.ovpn && echo "OVPN file downloaded successfully."
 
       - name: Check Original Runner IP
@@ -35,14 +34,14 @@ jobs:
             --device /dev/net/tun \
             -v $(pwd)/client.ovpn:/etc/openvpn/client.ovpn \
             ubuntu:latest \
-            bash -c "apt-get update && apt-get install -y openvpn curl iproute2 && openvpn --config /etc/openvpn/client.ovpn"
+            bash -c "export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get install -y openvpn curl iproute2 && openvpn --config /etc/openvpn/client.ovpn --daemon"
 
-      - name: Wait & Verify OpenVPN Logs
+      - name: Wait & Verify OpenVPN Connection
         run: |
           echo "Waiting for VPN connection to establish..."
           sleep 12
-          echo "=== OpenVPN Container Logs ==="
-          docker logs openvpn-client
+          echo "=== OpenVPN Process Check ==="
+          docker exec openvpn-client ps aux | grep openvpn
 
       - name: Check VPN Container Public IP & Tun0 Interface
         run: |
@@ -51,7 +50,7 @@ jobs:
           echo ""
           echo "=== Container Interfaces ==="
           docker exec openvpn-client ip a show tun0
-          # Verification: Check if tun0 exists inside container
+          # Verification: Check if tun0 exists and has IP assigned
 
       - name: Stop and Cleanup Container
         if: always()
