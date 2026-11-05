@@ -1,4 +1,4 @@
-name: OpenVPN Local HTTP Proxy
+name: OpenVPN Dual Local HTTP Proxy
 
 on:
   workflow_dispatch:
@@ -12,20 +12,11 @@ jobs:
       - name: Checkout repository code
         uses: actions/checkout@v4
 
-      - name: Download .ovpn file from URL
+      - name: Download .ovpn files
         run: |
-          curl -fsSL https://raw.githubusercontent.com/raiyan088/script/refs/heads/main/vpn.ovpn -o client.ovpn
-          test -s client.ovpn && echo "OVPN file downloaded successfully."
-
-      - name: Create VPN auth file (only if secrets are set)
-        env:
-          VPN_USER: ${{ secrets.VPN_USER }}
-          VPN_PASS: ${{ secrets.VPN_PASS }}
-        run: |
-          if [ -n "$VPN_USER" ] && [ -n "$VPN_PASS" ]; then
-            printf '%s\n%s\n' "$VPN_USER" "$VPN_PASS" > auth.txt
-            chmod 600 auth.txt
-          fi
+          curl -fsSL https://raw.githubusercontent.com/raiyan088/script/refs/heads/main/vpn.ovpn -o vpn1.ovpn
+          curl -fsSL https://raw.githubusercontent.com/raiyan088/script/refs/heads/main/vpn2.ovpn -o vpn2.ovpn
+          test -s vpn1.ovpn && test -s vpn2.ovpn && echo "Both OVPN files downloaded."
 
       - name: Create tinyproxy config
         run: |
@@ -46,80 +37,87 @@ jobs:
           curl -s --max-time 15 https://api.ipify.org
           echo ""
 
-      - name: Start OpenVPN Container
+      - name: Start both OpenVPN containers
         run: |
-          AUTH_MOUNT=""
-          AUTH_ARG=""
-          if [ -f auth.txt ]; then
-            AUTH_MOUNT="-v $(pwd)/auth.txt:/etc/openvpn/auth.txt:ro"
-            AUTH_ARG="--auth-user-pass /etc/openvpn/auth.txt"
-          fi
+          # কনটেইনারের ভেতরে দুটোই 8888 পোর্টে চলবে, হোস্টে আলাদা পোর্টে ম্যাপ হবে
+          # vpn1 -> 127.0.0.1:8888 , vpn2 -> 127.0.0.1:8889
+          for n in 1 2; do
+            HOST_PORT=$((8887 + n))
+            docker run -d \
+              --name openvpn-$n \
+              --privileged \
+              --cap-add=NET_ADMIN \
+              --device /dev/net/tun \
+              --dns 8.8.8.8 --dns 1.1.1.1 \
+              -p 127.0.0.1:$HOST_PORT:8888 \
+              -v $(pwd)/vpn$n.ovpn:/etc/openvpn/client.ovpn:ro \
+              -v $(pwd)/tinyproxy.conf:/etc/tinyproxy/custom.conf:ro \
+              alpine:latest \
+              sh -c "apk add --no-cache openvpn curl iproute2 tinyproxy && openvpn --config /etc/openvpn/client.ovpn"
+          done
 
-          docker run -d \
-            --name openvpn-client \
-            --privileged \
-            --cap-add=NET_ADMIN \
-            --device /dev/net/tun \
-            --dns 8.8.8.8 --dns 1.1.1.1 \
-            -p 127.0.0.1:8888:8888 \
-            -v $(pwd)/client.ovpn:/etc/openvpn/client.ovpn:ro \
-            -v $(pwd)/tinyproxy.conf:/etc/tinyproxy/custom.conf:ro \
-            $AUTH_MOUNT \
-            alpine:latest \
-            sh -c "apk add --no-cache openvpn curl iproute2 tinyproxy && openvpn --config /etc/openvpn/client.ovpn $AUTH_ARG"
-
-      - name: Wait for VPN Tunnel Connection
+      - name: Wait for both VPN connections
         run: |
-          echo "Waiting for VPN connection to establish..."
-          for i in $(seq 1 60); do
-            if docker logs openvpn-client 2>&1 | grep -q "Initialization Sequence Completed"; then
-              echo "VPN connected."
-              exit 0
-            fi
-            if [ "$(docker inspect -f '{{.State.Running}}' openvpn-client)" != "true" ]; then
-              echo "Container exited early:"
-              docker logs openvpn-client
+          for n in 1 2; do
+            echo "Waiting for openvpn-$n ..."
+            ok=0
+            for i in $(seq 1 60); do
+              if docker logs openvpn-$n 2>&1 | grep -q "Initialization Sequence Completed"; then
+                echo "openvpn-$n connected."
+                ok=1
+                break
+              fi
+              if [ "$(docker inspect -f '{{.State.Running}}' openvpn-$n)" != "true" ]; then
+                echo "openvpn-$n exited early:"
+                docker logs openvpn-$n
+                exit 1
+              fi
+              sleep 2
+            done
+            if [ "$ok" != "1" ]; then
+              echo "Timeout waiting for openvpn-$n"
+              docker logs openvpn-$n
               exit 1
             fi
-            sleep 2
           done
-          echo "Timeout waiting for VPN connection."
-          docker logs openvpn-client
-          exit 1
 
-      - name: Fix DNS inside VPN container
+      - name: Fix DNS and start tinyproxy in both containers
         run: |
-          docker exec openvpn-client sh -c 'printf "nameserver 1.1.1.1\nnameserver 8.8.8.8\n" > /etc/resolv.conf'
-
-      - name: Start tinyproxy inside VPN container
-        run: |
-          docker exec -d openvpn-client tinyproxy -d -c /etc/tinyproxy/custom.conf
+          for n in 1 2; do
+            docker exec openvpn-$n sh -c 'printf "nameserver 1.1.1.1\nnameserver 8.8.8.8\n" > /etc/resolv.conf'
+            docker exec -d openvpn-$n tinyproxy -d -c /etc/tinyproxy/custom.conf
+          done
           sleep 3
-          docker exec openvpn-client sh -c 'ps | grep [t]inyproxy' || { echo "tinyproxy not running"; exit 1; }
+          for n in 1 2; do
+            docker exec openvpn-$n sh -c 'ps | grep [t]inyproxy' || { echo "tinyproxy not running in openvpn-$n"; exit 1; }
+          done
 
-      - name: Test proxy (http://127.0.0.1:8888)
+      - name: Test both proxies
         run: |
-          echo "VPN IP through proxy:"
+          echo "Proxy 1 (127.0.0.1:8888) IP:"
           curl -s --max-time 20 -x http://127.0.0.1:8888 https://api.ipify.org
           echo ""
-
-      # ---- আপনার নিজের কাজ এখানে চালান, প্রক্সি ব্যবহার করে ----
-      - name: Run my task through the proxy
-        env:
-          HTTP_PROXY: http://127.0.0.1:8888
-          HTTPS_PROXY: http://127.0.0.1:8888
-        run: |
-          echo "My task IP:"
-          curl -s --max-time 20 https://api.ipify.org
+          echo "Proxy 2 (127.0.0.1:8889) IP:"
+          curl -s --max-time 20 -x http://127.0.0.1:8889 https://api.ipify.org
           echo ""
-          # এখানে আপনার স্ক্রিপ্ট যোগ করুন, যেমন:
-          # node my-script.js
-          # python my_script.py
+
+      # ---- আপনার নিজের কাজ এখানে চালান ----
+      - name: Run my task through the proxies
+        run: |
+          echo "Task via proxy 1:"
+          curl -s --max-time 20 -x http://127.0.0.1:8888 https://api.ipify.org
+          echo ""
+          echo "Task via proxy 2:"
+          curl -s --max-time 20 -x http://127.0.0.1:8889 https://api.ipify.org
+          echo ""
+          # এখানে আপনার স্ক্রিপ্ট যোগ করুন
 
       - name: Cleanup
         if: always()
         run: |
-          docker logs openvpn-client 2>&1 | tail -n 30 || true
-          docker stop openvpn-client || true
-          docker rm openvpn-client || true
-          rm -f auth.txt tinyproxy.conf
+          for n in 1 2; do
+            docker logs openvpn-$n 2>&1 | tail -n 20 || true
+            docker stop openvpn-$n || true
+            docker rm openvpn-$n || true
+          done
+          rm -f tinyproxy.conf
